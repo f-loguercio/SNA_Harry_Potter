@@ -1,0 +1,1044 @@
+---
+title: 'Final Group Project: Network Analysis For Happy Potter'
+author: 'Group 8: Vikas Agarwal, Camille Blain-Coallier, Federico C. Loguercio, Giulio
+  De Felice, Nayla Fakhoury, Alejandro Koury, Victor Vu Duy Phuoc'
+date: "15/03/2019"
+output: github_document
+---
+
+# Final Project Goal 
+
+###Harry Potter's Network: 
+
+For our final project, we chose to analyze Harry Potter's Network. As a new Harry Potter game is coming out on the Iphone/Android (similar to Pokemon Go), we decided to help people make their character pick easier. 
+
+https://www.cnet.com/news/harry-potter-wizards-unite-mixes-pokemon-go-with-a-mobile-mystery-but-release-date-remains-hidden/
+
+Therefore, we chose to analyze this network to evaluate if Harry Potter, the protagonist and supposedly main character of the movies, is actually the most important character within the story line (and the best choice for the game). We will base our conclusion by exploring the following network through various network techniques and subjects: 
+
+- Network Properties
+- Network Measures: Centrality
+- Network Measures: Transitivity
+- Network Models: Real World Networks
+- Information Diffusion
+- Community Detection
+- Network Visualization
+
+In addition, we wanted to evaluate which other characters played important roles in the story line.    
+ 
+```{r setup, include=FALSE}
+#setting up RMarkdown's environment to easily knit under any computer
+
+knitr::opts_chunk$set(echo = TRUE)
+r <- getOption("repos")
+r["CRAN"] <- "https://cran.rediris.es/"
+options(repos = r)
+
+```
+
+# Clearing and Loading Libraries
+
+Load the mandatory libraries to run the whole project:
+
+- data.table: Provides an enhanced version of data.frames, which are the standard data structure for storing data in base R.
+- igraph: Routines for simple graphs and network analysis. It can handle large graphs very well and provides functions for generating random and regular graphs, graph visualization, centrality methods and much more.
+- visNetwork: Provides an R interface to the 'vis.js' JavaScript charting library. It allows an interactive visualization of networks.
+- CINNA: Functions for computing, comparing and demonstrating top informative centrality measures within a network.
+- centiserve: Calculates centrality indices additional to the 'igraph' package centrality functions.
+- keyplayer: Computes group centrality scores and identifies the most central group of players in a network.
+- dplyr: A fast, consistent tool for working with data frame like objects, both in memory and out of memory.
+- sna: A range of tools for social network analysis, including node and graph-level indices, structural distance and covariance methods, structural equivalence detection, network regression, random graph generation, and 2D/3D network visualization.
+
+
+```{r}
+#dev.off() #should be run only if R is not under default parameters
+
+rm(list=ls()) #clear environment from past data
+
+list_of_packages <-c("data.table", "igraph", "visNetwork", "CINNA", "centiserve", "keyplayer", "dplyr", "sna")
+
+new_packages <- list_of_packages[!(list_of_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages) #install libraries from the list of packages only if they haven't already been installed 
+
+library("data.table")
+library("igraph")
+library("CINNA")
+library("visNetwork")
+library("centiserve")
+library("keyplayer")
+library("dplyr")
+library("sna")
+#load all libraries from the list of packages
+
+```
+
+
+# Loading Data
+
+In this section, the goal is loading the given datasets, building the graph and analyzing basics metrics.
+
+Harry Potter's Network: 
+
+There are two data frames that were loaded, the Edges and the Keys.
+
+The Keys dataframe shows a list of 65 Characters and includes information regarding their alignment, gender, house to which they belong and the color attributed to that house. These 65 characters are regarded as the most important characters within all the Harry Potter movies. 
+
+The Edge dataframe shows 513 links between characters (links between each character name (source) with another character (target)). However, many have duplicated loops, so that when we remove those, the number of edges decreases to 330. There is no need for duplicated loops in this case because our graph is undirected and if one character knows another, then automatically, the inverse is true.   
+
+In all, the joint graph (igraph) of the edges and keys is an undirected and unweighted network.The dataframe is unweighted because the links are based on which Characters know each other. 
+
+```{r}
+
+edges <- as.data.frame(fread("https://gist.githubusercontent.com/CamilleBlainCoallier/3e5604911cad5004bfe213030291808a/raw/58bdd7a0dce34e0f5de309fe8d6c1ce536ef148b/Edge_list_HP"))
+keys <- as.data.frame(fread("https://gist.githubusercontent.com/CamilleBlainCoallier/7c564144a0c8397fac1b6b67c5776616/raw/2be29fbc24fcb55022b07ce40cc4d74786821e61/Keys_nodes_HP"))
+
+summary(edges) #list of links between characters (target to source)
+
+g1<- graph_from_data_frame(d=edges, vertices=keys, directed=F)
+g1 #originally, we can see that there are 65 nodes and 513 edges from calling the graph
+
+g11<-igraph::simplify(g1,edge.attr.comb = "min") #removing duplicates and self-loops
+g11 #after simplifying, we obtain a graph with 65 nodes but only 330 edges
+
+V(g11) #number of nodes in the network which is equal to 65 - to confirm with g11 analysis
+E(g11) #number of edges in the network which is equal to 330 - ton confirm with g11 analysis
+
+vertex_attr(g11) #describes every column in the graph and the content within that column (all possible values)
+
+class(g11) #verifying that the graph is now under the class igraph for further analysis
+
+```
+
+### Graphing the Network
+
+Graphical representation of the network. The nodes are colored to represent the house to which the node belongs to. For example, characters from Gryffindor are colored in red (see legend for color associations). The Kamada Kawai layout was used becasue it was the best layout when wanting to separate the nodes as much as possible. 
+
+As we can see from the graph, most of the characters are Gryffindor, with Slytherin in second place. This isn't surprising, as the main characters we all know from Harry Potter (Harry Potter, Hermione Granger and Ron Weasley) all belong to the Gryffindors. 
+
+In addition, the nodes on the outskirt of the network are the characters with less connections to the other characters. In other words, they know less people than any of the characters in the center of the graph. 
+
+```{r}
+color_vertices <- keys %>%
+  group_by(House, Color) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Color)) #assigning a vertice's color to the its house and color within the dataset
+
+mylayout <- layout.kamada.kawai(g1) #assign chosen layout to use to represent our network
+
+par(mar=c(1,1,3,1)) #modify the layout of the RMarkdown
+
+#plot the initial Harry Potter Network
+plot(igraph::simplify(g1,edge.attr.comb = "min"),
+     layout = mylayout,
+     legend = TRUE,
+     vertex.label = V(g1)$Character,
+     vertex.color = V(g1)$Color, 
+     vertex.frame.color = "gray", 
+     vertex.label.color = "black", 
+     vertex.label.cex = 0.6,
+     vertex.label.dist=6,
+     vertex.size = 20,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-5,3.5),
+     xlim = c(-5,2))
+legend("topleft", legend = c(NA, "", as.character(color_vertices$House)), pch = 19,
+       col = c(NA, NA, color_vertices$Color), pt.cex = 1.5, cex = 0.65, bty = "n", ncol = 1,
+       title = "")
+legend("topleft", legend = "", cex = 0.95, bty = "n", ncol = 1,
+       title = "Harry Potter's Network Character Connections")
+```
+
+### Alignment Graph of the Characters
+
+This graph gives us an overall view of each character's alignment. Surprisingly, there is a higher number of "Good" characters amongst the 65 most important. "Evil" and "Neutral" characters seem to have the same proportion. 
+
+(The graph is interactive, meaning you can zoom in/out but also can click on specific nodes and move them around. Plus, if the graph does not show in the Markdown, make sure it is in the same zip folder that the R document)
+
+```{r}
+
+keys_viz<-keys #make a copy of the keys dataframe to avoid writing over the original data
+
+keys_viz$group <- keys$Alignment #group characters based on their alignment
+
+visnet <- visNetwork(keys_viz, edges) #create a visNetwork
+
+#plot the three alignments without any edges because we are interested in the distribution and not the relationship
+visnet <- visGroups(visnet, groupname = "Evil", shape = "square",
+                     color = list(background = "tomato", border="black"))
+visnet <- visGroups(visnet, groupname = "Good", shape = "dot",       
+                     color = list(background = "green", border="black"))
+visnet <- visGroups(visnet, groupname = "Neutral", shape = "diamond",   
+                     color = list(background = "gray", border="black"))
+visLegend(visnet, main="Legend", position="right", ncol=1)
+
+```
+
+# Degree Level and Distribution
+
+### Degree Level
+
+The actors network has a mean degree value of 10.15. This means that actors within the network are on average directly connected with 10 other actors by virtue of knowing similar people. This seemingly small number is surprising considering this network is comprised of the most important characters in the movies. 
+
+It is clear from the histogram charts that the distribution doesn't follow a normal distribution as it contains a right skew. The distribution in particular follows the so-called "Power Law" in that only a handful of articles have a high degree level.
+
+With regards to standard deviation of the network, it is clear there is a fairly wide distribution (the standard deviation is actually just a bit smaller than the mean). This implies that while the overall average is quite low at approximately 10, there are almost more than a few characters who's degrees are significantly higher or lower than this figure (shows high dispersity between the network degrees). 
+
+To have a better understanding of the first 15 degrees for each graph, we created an additional histogram representing the splitting of the degree distribution between 0 and 15 degrees for characters. From this, we can see that from 0 to 15 degrees, the frequencies are better distributed. Only degree 4 is considerably more frequent than the others. 
+
+```{r}
+
+deg<-igraph::degree(g11, mode = "total")
+hist(deg, main="Histogram of Node Degree For Characters", ylim=c(0,30), col = "tomato") #plotting histogram of degree level frequencies
+
+summary(deg) #gain information on the mean
+sd(deg) #gain information on the standard deviation
+
+#when looking at the first 3 bars more in depth; range of 0 to 15 degrees
+hist_1<-hist(deg, main="Histogram of Node Degree For Characters From 0-15 Degrees", xlim=c(0,15), ylim=c(0,30), breaks=888, col = "tomato") 
+
+```
+
+### Degree Distribution 
+
+The degree distribution looks like a continuous logarithmic shaped where the cumulative frequency increases at a fast pace and then stagnates; it is discontinued at the beginning and then becomes constant when it becomes closer to 1. This confirms that most characters are within degree levels of 22. We can infer, that these characters, may represent secondary or tertiary roles in the movies, with only a few main character to the story line.  
+
+```{r}
+
+deg.dist <- igraph::degree_distribution(g11, cumulative=T, mode="all")
+
+plot( x=0:max(deg), y=1-deg.dist, pch=19, cex=1.2, col="orange", xlab="Degree", ylab="Cumulative Frequency for Characters")
+
+summary(deg.dist)
+
+```
+
+
+### Network Based on Level of Degree
+
+Graphical representation of the network where the nodes are still colored to represent the house to which the node belongs to. However, now, the node sizes are based on the level of degree each character has (higher levels of degree have bigger node sizes). 
+
+As we can see from the graph, not surprisingly, the characters with the highest levels of degree are the main protagonists from the story line. This not only includes Harry, Hermione and Ron, but also Dumbledore and Voldemort. Later in the analysis, we will see which character has the highest degree between them. 
+
+```{r}
+
+par(mar=c(1,1,3,1)) #layout of the RMarkdown
+
+plot(igraph::simplify(g1,edge.attr.comb = "min"),
+     layout = mylayout,
+     legend = TRUE,
+     vertex.label = V(g1)$Character,
+     vertex.color = V(g1)$Color, 
+     vertex.frame.color = "gray", 
+     vertex.label.color = "black", 
+     vertex.size = deg*1.3,
+     vertex.label.cex = 0.6,
+     vertex.label.dist=3,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-5,3),
+     xlim = c(-5,2))
+legend("topleft", legend = c(NA, "", as.character(color_vertices$House)), pch = 19,
+       col = c(NA, NA, color_vertices$Color), pt.cex = 1.5, cex = 0.65, bty = "n", ncol = 1,
+       title = "")
+legend("topleft", legend = "", cex = 0.95, bty = "n", ncol = 1,
+       title = "Harry Potter's Character Level of Degree")
+
+```
+
+
+# Network Properties 
+
+### Connected Component (Graph Theory)
+
+In graph theory, a connected component (or just component) of an undirected graph is a graph in which any two vertices are connected to each other by paths. The cohesion of a graph is the vertex connectivity of the graph. This is calculated by cohesion. In our case, we can see that our graph, from prior visualization was connected, but this result is also supported by the cohesion equation, which equals to 1. Thus, our whole network is confirmed as connected and every character in our network is somewhat connected to each other. 
+
+```{r}
+
+cohesion(g11, checks = TRUE) #calculate if our whole network is connected or not
+
+```
+
+
+### Network Average Path Length
+
+The average path length describes the average distance between any two vertices (nodes).
+
+The average path length of the Harry Potter network has a value of 2.02. This suggests that the network is on average not very dispersed, meaning that any two randomly selected characters of Harry Potter are closely related. This would make sense as this data represents the most important characters within the movies. 
+
+```{r}
+
+mean_distance(g11, directed=F) #calculate the average path length in an undirected graph
+
+```
+
+###Graph Theory: Dijkstra 
+
+Now that we have calculated the average path length, the Dijkstra algorithm identifies the shortest paths in the network. Here are the steps to follow in order to obtain these paths:
+
+First, to run the algorithm, we had to compute the Adjacency Matrix. 
+
+```{r}
+
+g11_edgelist<-as_edgelist(g11) #the adjacency matrix can only be calculated from a list of edges (conversts the grah's edges to a list)
+g11_ajd<-get.adjacency(graph.edgelist(as.matrix(g11_edgelist), directed=FALSE)) #compute adjacency matrix
+g11_ajd #by calling the adjacency matrix, we can see which characters have a connection (1) and when they don't (0) - sample of the matrix
+
+```
+
+Then, we were able to run Dijkstra, from which we obtained the matrix of the shortest paths. On average, the shortest paths are of 2, which supports the fact that our average path length is equal to 2. We can see that there is also only one shortest path equivalent to 4, which we can assume is our diameter (this will be confirmed below).  
+```{r}
+
+graph_ajd<-graph.adjacency(g11_ajd) #convert matrix adjacency to a graph for which we can then obtain the shortest paths matrix (below) when using the dijkstra algorithm
+
+s.paths <- shortest.paths(graph_ajd, algorithm = "dijkstra")
+s.paths
+
+```
+
+### Network Diameter
+
+In contrast to the shortest path between two nodes, we can also calculate the longest path, or diameter. The network diameter describes the longest possible distance between two vertices in terms of the most efficient path.
+
+In our network, the longest path connects 4 edges (5 characters).
+
+get_diameter returns a path with the actual diameter. In our case, the diameter passes by: Regulus Arcturus Black, Sirius Black, Hermione Granger, Luna Lovegood and Xenophilius Lovegood. From this result, we can assume that some of these characters have high centrality measures (to confirm below).
+
+```{r}
+diameter_characters<-diameter(g11, directed=F)
+diameter_characters #length of diameter
+
+get_diameter(g11) #list of characters that are part of the diameter
+```
+
+### Plotting Longest Path in Harry Potter Network
+
+The following graph plots the whole network but highlights the diameter in red. Surprisingly, the diameter goes through Hermione Granger, instead of Harry Potter. Harry Potter seems to be able to make the same connections as Hermione Granger, but wasn't chosen, most likely, because he has a smaller level of degree (discussed later).
+
+```{r}
+
+par(mar=c(1,1,3,1)) #layout of the RMarkdown
+
+g11_diameter <- g11
+node_diameter <- get.diameter(g11_diameter,  directed = FALSE) #assignment the diameter parth to the igraph
+
+#Specifying the nodes' and edge's characteristics (color, size, transparency, width)
+V(g11_diameter)$color <- scales::alpha(V(g11_diameter)$color, alpha = 4)
+V(g11_diameter)$size <- 10
+
+V(g11_diameter)[node_diameter]$color <- "red"
+V(g11_diameter)[node_diameter]$size <- 20
+
+E(g11_diameter)$color <- "grey"
+E(g11_diameter)$width <- 0.01
+
+E(g11_diameter, path = node_diameter)$color <- "red"
+E(g11_diameter, path = node_diameter)$width <- 3
+
+#Plotting the whole graph
+plot(g11_diameter,
+     layout = mylayout,
+     legend = TRUE,
+     vertex.label = V(g11_diameter)$Character,
+     vertex.frame.color = "gray", 
+     vertex.label.color = "black", 
+     vertex.label.cex = 0.6,
+     vertex.label.dist=3,
+     edge.lty = E(g11_diameter)$lty,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-4.5,4),
+     xlim = c(-5,2))
+legend("topleft", legend = "", cex = 1.25, bty = "n", ncol = 1,
+       title = "The Network's Diameter")
+
+```
+
+### Giant Component
+
+In most of the research topics for network analysis, network features are related to the largest connected component of a graph (Newman 2010). In order to get that for an igraph or a network object, giant_component_extract function is specified. This function extracts the strongest components of the input network as igraph objects.
+
+In the end, for this network, the function only gives us 2 lists of the edges. This may be a consequence of a small node network, where all the edges are strong compenents (due to the limited size of the network).
+
+```{r}
+
+giant_component_extract(g11)
+
+```
+
+
+# Node importance: Centrality measures
+
+### Overall Centrality
+
+Centrality describes the number of edges from nodes. High centrality networks have few nodes with many connections, low centrality networks have many nodes with similar numbers of edges.
+
+For the whole network, we can calculate centrality by degree (centr_degree()), closeness (centr_clo()), eigenvector centrality (centr_eigen()) or betweenness (centr_betw()) of vertices.
+
+In this case, centrality by degree and closeness result in close numbers. However, all centrality measures are below 1, which would mean that the network has many nodes with similar number of edges. This makes sense, as the diameter is only equal to 4 edges, with the average shortest path at 2. 
+
+```{r}
+
+#centrality by degree
+centr_degree(g11,mode="total")$centralization
+
+#centrality by closeness
+centr_clo(g11, mode="total")$centralization
+
+#centrality by eigenvector
+centr_eigen(g11, directed=FALSE)$centralization
+
+#centrality by betweenness
+centr_betw(g11, "total")$centralization
+
+```
+
+
+### Plotting Highest Degree Centrality
+
+Visualization of the characters with the highest degree centrality sorted in decreasing order (clockwise). The name of the character is centered in the node (Harry Potter having the highest degree centrality and Nicolas Flamel the lowest). 
+
+```{r}
+#layout of RMardown
+par(mar=c(1,1,0,0))
+
+visualize_graph(g11 , centrality.type="Degree Centrality")
+
+```
+
+### Network Component Analysis
+
+Centrality is defined as a measure for identifying the most important vertices within a network in graph theory. Several centrality types have been provided to compute central nodes by different formulas, while some analysis are needed to evaluate the most informative ones.
+
+Before further calculating centrality measures, we need to extract the components of the graph to then, identify correctly the recommended the best fitted centrality measures according to this graph. 
+
+### Segregation of other graph formats
+
+This function extracts the components of other formats of graph. For illustration, we convert the Harry Potter graph to an edge list to be able to use it for this function.
+
+```{r}
+
+g11_edgelist<-as_edgelist(g11)
+
+misc_extract_components(g11_edgelist)
+
+```
+
+### Centrality Measure Analysis
+
+All of the introduced centrality measures are not appropriate for all types of networks. So, to figure out which of them is suitable, proper_centralities is specified. This function distinguishes proper centrality types based on network topology. It returns the full names of suitable centrality types for the input graph. 
+
+
+```{r}
+
+proper_centralities(g11)
+
+```
+
+### Centrality Computations
+
+In the next step, proper centralities for the network are defined. In order to compute proper centrality types resulting from the proper_centralities, you can use calculate_centralities function as below.
+
+```{r}
+
+pr_cent<-proper_centralities(g11)
+
+```
+
+The following function has the ability to specify some centrality types that are not favored to calculate by the conclude argument. Here, we will select the first ten centrality measures.
+
+```{r}
+
+calc_cent<-calculate_centralities(g11, include = pr_cent[1:10])
+
+```
+
+### Recognition of most informative measures
+
+From this algorithm, the result is a list of computed centralities.
+
+The following is a display of the most informative centrality measures based on principal component analysis. The red line indicates the random threshold of contribution. This barplot represents contribution of variable values based on the number of dimensions.
+
+```{r}
+
+pca_centralities(calc_cent)
+
+```
+
+Now that we have the top 10 centrality measures, we will look at the correlation within each centrality measure and choose measures that aren't highly correlated to each other. When they are highly correlated, it means that they will provide the same kind of information and will only be regarded as repetitive. 
+
+### Correlation between computed centrality measures
+
+To comprehend pair correlation among centralities, visualize_correlations method is appropriate; it is able to specify the type of correlation which are interesting to obtain and analyse. 
+
+```{r}
+
+visualize_correlations(calc_cent,"pearson")
+
+#A display of correlation among computed centrality measures. The red to blue highlighted circles represent the top to bottom Pearson correlation coefficients(Benesty et al. 2009) which differ from -1 to 1. The higher the value becomes larger, circles' sizes get larger too.
+
+```
+
+As we can see, there are high levels of correlations between: 
+
+- Closeness, Decay and Barycenter; these were the top 3 measures from which we will only choose closeness
+- Degree and subgraph; choose degree
+- Topological
+- Bottleneck
+
+# Chosen Centrality Measures:
+
+### Closeness
+
+Closeness centrality measures the average distance from any given vertex to all other vertices. The closeness list is dominated exclusively by well known characters, most of them being aligned as good and from Gryffindor. This is an indicator that House and Alignment are closely aligned (connected).
+
+```{r}
+
+#create a new dataframe for top 20 centralities from the keys dataframe
+keys_top20_centrality<-keys
+
+#keep only important columns to show
+keys_top20_centrality$Color<-NULL
+keys_top20_centrality$id<-NULL
+keys_top20_centrality$Gender_Male<-NULL
+
+#assign closeness value to each actor
+keys_top20_centrality$closeness <- igraph::closeness(g11, mode = "total")
+
+#order the dataframe based on decreasing order in closeness
+head(keys_top20_centrality[order(-keys_top20_centrality$closeness),],n=20)
+
+```
+
+### Highest Degree
+
+The top 20 list with the highest degree centrality shows the actors with the most links in relation to nodes within the network. In this case, a higher centrality degree is directly related to the number of relationships the characters have with others. Although Hermione is the character with the most relationships (most degrees) and not Harry Potter, because she's considered the most knowledgeable character in the story line. 
+
+Again, the high degree centrality of the top-20 list might be explained by virtue of the dominance of the common House. Furthermore, the dominance of Good Alignment in characters suggests that there are fewer Evil characters than Good characters. If it is assumed that Evil characters are nevertheless required in all Harry Potter films, but considering the movies are on average PG-13, Good characters are more popular. This could be a possible explanation for the high degree values of the top 20 list.
+
+
+```{r}
+
+#assign degree value to each actor
+keys_top20_centrality$degree<-igraph::degree(g1,mode = "total")
+
+#order the dataframe based on decreasing order in degree
+head(keys_top20_centrality[order(-keys_top20_centrality$degree),],n=20)
+
+```
+
+
+### Topological Coefficient
+
+The topological coefficient is a relative measure for the extent to which a node shares neighbors with other nodes. More precisely, the topological coefficient is the number of neighbors shared between a pair of nodes, x and y, plus one if there is a direct link between them, divided by the number of neighbors of node x. Thus, nodes that have one or no neighbors are assigned a topological coefficient of 0.
+
+In this case, it is normal for Harry Potter, Voldemort, Hermione and Ron to have the highest values, as they share many of the same relationships with other characters and most of the scenes include one of the characters. 
+
+```{r}
+
+#assign topological coefficient value to each actor
+keys_top20_centrality$topological<-1/centiserve::topocoefficient(g11)
+
+#order the dataframe based on decreasing order of coefficient
+head(keys_top20_centrality[order(-keys_top20_centrality$topological),],n=20)
+
+```
+
+### BottleNeck Centrality
+
+A bottleneck to a network is a node that has information to the network that is concentrated. The bottleneckness of a node can be calculated using betweenness centrality, which is a measure of a node's centrality in a network, and equal to the number of shortest paths going through it. 
+
+In other words, a node characterized by high bottleneck centrality means that most nodes need to pass through this specific node to follow a certain path (these paths being the shortest paths). Thus, even though Hermione might have the most connections, Harry has more particular connections which requires the information to pass through him instead of Hermione. 
+
+```{r}
+
+#assign degree value to each bottleneck centrality value
+keys_top20_centrality$bottleneck <- bottleneck(g11)
+
+#order the dataframe based on decreasing order of bottleneck centrality value
+head(keys_top20_centrality[order(-keys_top20_centrality$bottleneck),],n=20)
+
+```
+
+# Other Common Centrality Measures
+
+During our Social Network Analysis Class, we had the opportunity to learn about other common centrality measures that weren't considered important through the PCA analysis. However, we did want to analyze these measures, as they were essential to our learning curve during our semester. 
+
+### Betweenness
+
+Betweenness centrality is a metric used to find nodes that serve as a bridge (connector) from one part of the network to another. In other words, betweenness measures the average length of shortest paths that pass through a vertex. Accordingly characters with a high betweenness can be understood as links between different closed clusters of characters.
+
+As we can see, only a few characters have high level of betweenness. On average, if characters have low betweenness measurements, this demonstrates that most of these nodes do not lie on the shortest paths. This goes in hand with the bottleneck centrality measure, where characters that lie more frequently on these paths have a higher probability of being considered bottlenecks for the network (which is true when looking at the first two values of each dataframe). 
+
+```{r}
+
+#create a new dataframe for top 20 centralities from the keys dataframe
+keys_top20_others <- keys
+
+#keep only important columns to show
+keys_top20_others$Color<-NULL
+keys_top20_others$id<-NULL
+keys_top20_others$Gender_Male<-NULL
+
+#assign degree value to each bottleneck centrality value
+keys_top20_others$betweenness <- igraph::betweenness(g11, directed = FALSE)
+
+#order the dataframe based on decreasing order of bottleneck centrality value
+head(keys_top20_others[order(-keys_top20_others$betweenness),],n=20)
+
+```
+
+When plotting the higher values of betweenness in our inital network:
+
+```{r}
+#layout of RMarkdown
+par(mar=c(1,1,1,1))
+
+#create variables for the plot
+edge_betweenness <- igraph::edge_betweenness(g11, directed = FALSE)
+betweenness<-igraph::betweenness(g11, directed = FALSE)
+
+plot(igraph::simplify(g1,edge.attr.comb = "min"),
+     layout = mylayout,
+     legend = TRUE,
+     vertex.label = V(g1)$Character,
+     vertex.color = V(g1)$Color, 
+     vertex.size = betweenness * 0.001, 
+     vertex.frame.color = "gray", 
+     vertex.label.color = "black",
+     vertex.label.cex = 0.6,
+     edge.width = edge_betweenness * 0.12,
+     edge.color = "gray",
+     edge.lty = E(g1)$lty,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-4.5,4.5),
+     xlim = c(-2,2))
+legend("top", legend = "", cex = 0.95, bty = "n", ncol = 1,
+       title = "Harry Potter's Character Edge Betweenness")
+
+```
+
+### Top 10 Strongest 2-Character Betweenness
+
+Having a closer look at the betweenness topic, we can also explore the strongest 2-character betweenness. The 2-Character betweenness represents the top 10 most popular relationships where the most frequent shortest paths pass through. From this dataframe, we can infer that the highest values are given to characters that have strong relationships and one on the characters in the relationship, is only connected to the other character (who then has a high degree centrality). For example, Harry Potter and Hedwig have a high in betweenness because Hedwig is only connected to Harry, but Harry is one of the most connected characters. 
+
+```{r}
+
+data.frame(edge = attr(E(g11), "vnames"),
+           betweenness = edge_betweenness) %>%
+  tibble::rownames_to_column() %>%
+  arrange(-betweenness) %>%
+  .[1:10, ]
+```
+
+# Graph Theory
+
+### Eigenvector
+
+Eigenvector centrality is a measure of the influence of a node in a network. Relative scores are assigned to all nodes in the network based on the concept that connections to high-scoring nodes contribute more to the score of the node in question than equal connections to low-scoring nodes. A high eigenvector score means that a node is connected to many nodes who themselves have high scores. PageRank and the Katz centrality are variants of the eigenvector centrality. PageRank won't be computed as it is for often used to rank web pages and for directed graphs. 
+
+Eigenvector centrality works well only if the graph is (strongly) connected. Real undirected networks typically have a large connected component, of size proportional to the network size. Therefore, because our graph is undirected, we do not need to find the Katz centrality measure, as it is used mostly for directed graphs.
+
+If a directed network is not strongly connected, only vertices that are in strongly connected components or in the out-component of such components can have non-zero eigenvector centrality. The other vertices, such as those in the in-components of strongly connected components, all have, with little justification, null centrality. This happens because nodes with no incoming edges have, by definition, a null eigenvector centrality score, and so have nodes that are pointed to by only nodes with a null centrality score.
+
+Katz centrality: A way to work around this problem is to give each node a small amount of centrality for free, regardless of the position of the vertex in the network. Hence, each node has a minimum, positive amount of centrality that it can transfer to other nodes by referring to them. 
+
+However, because we have an undirected network, we only computed the eigenvector centralities. From our results, we can see that the top characters are from the Weasley family. This family has ties with important characters and are considered one of the prominent wizarding families. 
+
+```{r}
+
+#assign degree value to each bottleneck centrality value
+keys_top20_others$eigen<-igraph::eigen_centrality(g1)$vector
+
+#order the dataframe based on decreasing order of bottleneck centrality value
+head(keys_top20_others[order(-keys_top20_others$eigen),],n=20)
+
+```
+
+#Network Measures: Transitivity and Reciprocity
+
+There is no reciprocity for undirected graph. Thus, we will only compute transitivity. 
+
+###Transitivity
+
+Transitivity measures the probability that the adjacent vertices of a vertex are connected. This is sometimes also called the clustering coefficient. The clustering coefficient measures the transitivity of a network, that is how connected closed groups of vertices are with each other. The global clustering coefficient gives an indication of the overall clustering in the network, while the local clustering coefficient gives an indication of the embeddedness of single nodes.
+
+This suggests that there are more tightly knit groups of actors by virtue of shared Alignment. 
+
+```{r}
+
+#calculate global transitivity in the dataframe
+transitivity(g11, type="global")
+
+#calculate local transitivity in the dataframe
+transitivity(g11, type="localaverageundirected")
+
+```
+
+#Network Models: Real World networks
+
+## Erdos-Renyi (random graphs)
+
+In this section, we will explore the Erdos-Renyi model and compare its structural properties to those of real-world networks that we graphed above. 
+
+```{r}
+#For our Erdos-Renyi model, we used the sample_gnm function from which we used the number of nodes in the networks to create our new models. 
+vertices_characters<-vcount(g11)
+edges_characters<-ecount(g11)
+
+er_potter<-sample_gnm(vertices_characters,edges_characters, directed = FALSE)
+
+```
+
+
+Degree distribution of Erdos-Renyi (ER) is now normally distributed versus the real-world networks (original distribution of Harry Potter's network was right skewed), where degrees between 5 and 15 are the most frequent.
+
+```{r}
+#Degree Distribution
+
+deg_erpotter<-igraph::degree(er_potter)
+hist(igraph::degree(er_potter), xlim = c(0,20), ylim = c(0,20), col = "tomato")
+```
+
+
+The average path length and diameter have not changed between both model, with 2 and 4. These values may not change when comparing smaller networks together; both networks are as well connected. 
+
+```{r}
+#Network Diameter and Average Path Length
+
+mean_distance(er_potter, directed=F)
+diameter(er_potter)
+
+```
+
+When applying the Erdos-Renyi models, the local and global clustering coefficient becomes almost equal to 0, removing any types of triangular connections or relationships that existed between the nodes whether local or global. Furthermore, the almost 0 values for the cluster coefficient for the Erdos-R?nyi model demonstrates a lack of clusters in this network. This signifies that clusters found in the real world networks would not necessarily occur given random conditions.
+
+
+```{r}
+
+#(Global and Local) Clustering Coefficient
+
+global_er_potter<-transitivity(er_potter) #GLOBAL
+global_er_potter
+
+local_er_potter<-transitivity(er_potter, type='localaverageundirected') #LOCAL
+local_er_potter
+```
+
+In conclusion, the Erdos-Renyi model doesn't describe real life networks as well. Access to larger networks (social networks, power networks, the world wide web, etc.) have made clear that many previous graph-theory models which were used to approximate networks were incorrect - the most famous of which, the Erdos-Renyi model, failed to replicate the clustering, triadic closure, and hubs seen in real-world networks.  As a result, there were two notable models created in an attempt to fix some of the problems Erdos-Renyi had: The Watts-Strogatz model and the Barabasi-Albert model. 
+
+### Watts Strogatz (small world)
+
+The Watts-Strogatz model is a random graph generation model that produces graphs with small-world properties, including short average path lengths and high clustering.
+
+They start with the lattice model that has high clustering and high mean path length. Then, add to the model a probability p that an edge is rewired, meaning that the edge is disconnected from one of its nodes and then randomly connected to another node anywhere in the network. Each edge is chosen to be rewired independent with probability p.
+
+```{r}
+#create small world network and plot to see what it looks like
+g.ws <- sample_smallworld(dim=2, size=65, nei=1, p=0.015)
+plot(g.ws, vertex.size=6, vertex.label=NA, layout=layout_in_circle)
+
+```
+
+When the probability p is low, then most connections are still the original local connections that they connect nodes that are nearby in the lattice. However, some of the edges that have been rewired might turn into long distance connections that connect nodes that are far away from each other in the lattice. These long distance connections, or shortcuts, immediately create a short distance between the nodes around either end of the shortcut.
+
+Originally, each node was symmetrically connected to its nearest neighbors along the ring. But then, each edge was rewired with probability 1/65. If an edge was selected for rewiring, one end of the edge was disconnected from a node and reconnected with a randomly chosen node. When probability is large (like in our graph), the transivity becomes low.   
+
+This model does not replicate the real world network, as it's mean path length is around 5 times longer. This is because of the rewiring of the edges, which creates longer paths on average. 
+
+```{r}
+transitivity(g.ws) #clustering coefficient
+
+mean_distance(g.ws) #diameter
+```
+
+### Preferential Attachment: Barabasi
+
+The Barab?si-Albert (BA) model is an algorithm for generating random scale-free networks using a preferential attachment mechanism. The BA model tries to explain the existence of few nodes with high degree in real networks.
+
+```{r}
+
+par(mar=c(1,1,1,1))
+
+#create BA network and plot to see what it looks like
+g.ba <-  sample_pa(n=65, power=1, m=1,  directed=F)
+plot(g.ba, vertex.size=6, vertex.label=NA)
+
+```
+
+
+Many observed networks (at least approximately) fall into the class of scale-free networks, meaning that they have power-law (or scale-free) degree distributions, while random graph models such as the Erdos-R?nyi (ER) model and the Watts-Strogatz (WS) model do not exhibit power laws.
+
+Even though the BA's network degree distribution has the same right skewed shape, there are too many node degrees between 0 and 2 degrees. In addition, the BA model doesn't represent the outliers that we have in the real world networks (nodes of degrees of 50 for example). 
+
+```{r}
+hist(igraph::degree(g.ba), col="tomato", xlab="Degree", ylab="Frequency", main="", ylim=c(0,60), xlim=c(1,10))
+
+```
+
+
+# Information Diffusion
+
+### Group Centrality Measure
+
+The basic idea of measuring the group-level centrality is to treat a group of nodes as a large pseudo-node. We propose several methods to measure the tie status between this pseudo node and other nodes, responding to several common edge value interpretations (An and Liu, 2015).
+
+In a context, centrality measures may be insufficient to describe the data.
+
+None of these packages (network, igraph, statnet) provide a comprehensive toolbox to calculate
+group centrality measures and to identify key players, who constitute the most central group, in a
+network. Determining the key players in a network is very important because interventions rely on key players to facilitate the intervention.
+
+The algorithm for identifying key players in package keyplayer essentially consists of three steps.
+First, users choose a metric to measure centrality in a network. Second, the algorithm (specifically the kpcent function) will randomly pick a group of players and measure their group centrality. Third,
+the algorithm (specifically the kpset function) will select the group of players with the highest group
+centrality as the desired key players.
+
+The keys players, 15 and 32, in our network belong to Vernon Dursley and Remus Lupin. This means that if a message needed to be passed around within the network, the speed at which all characters would know the message would be the highest with these characters. This is surprising, as both these characters are not the main characters of the story. 
+
+```{r}
+kpset(g11_ajd, size = 2, type = "diffusion", cmode = "all", method = "max")$keyplayers
+
+kpset(g11_ajd, size = 2, type = "diffusion", cmode = "all", M = 1, binary = TRUE)$keyplayers
+
+```
+
+When calculating the group-level centraility scores of both keyplayer nodes 15 and 32, we quickly realize that node 15 has a much higher score than 32. In addition, other nodes that aren't considered keyplayers also have higher scores. 
+```{r}
+#kpcent reports the group-level centrality scores.
+kpcent(g11_ajd, 15, type = "degree", binary = TRUE) #for 15
+kpcent(g11_ajd, 32, type = "degree", binary = TRUE) #for 32
+kpcent(g11_ajd,c(15,32),type="degree") #for both together
+
+```
+
+Thus, we want to confirm these keyplayers through another diffusion function. 
+
+### Diffusion
+
+Now, we wanted to compare the diffusion level of the same network with another function. Diffusion measures player's ability to disseminate information through all the possible paths. For each path from i to j there is a reaching probability P(ij), which is specified in the inputted adjacency matrix (g11_ajd).
+
+From both algorithms, we can see that we obtain two similar results, as both functions determine Vernon Dursley as the character with the highest diffusion. However, Remus Lupin is not considered a key player for diffusion in the following function. 
+
+[We are going to test these results in Netlogo]
+
+```{r}
+
+keys_diffusion<-keys
+keys_diffusion$Gender_Male<-NULL
+keys_diffusion$Color<-NULL
+keys_diffusion$id<-NULL
+
+keys_diffusion$diffusion<-diffusion(g11_ajd, c(1:65), T = ncol(g11_ajd))
+
+head(keys_diffusion[order(-keys_diffusion$diffusion),], n=65 )
+
+```
+
+
+# Community Detection
+
+### Subgroups and commmunities
+
+Subgroup discovery aims at identifying interesting descriptive subgroups contained in a dataset - from a compositional network analysis view, aiming at a description given by a set of attribute values.
+
+The following functions for cliques give us: 
+
+- The list of all cliques (groups of nodes) within the network
+- The size of all the cliques
+- The largest or all the maximal cliques in an undirected graph
+
+In this case, we have two maximal cliques, which differ very slightly (Arthur Weasley and Voldemort are interchanged). This could be because they are within the limits of being included in the clique. Thus, taking them out of the cliques would not have such a great impact. 
+
+```{r}
+
+sapply(cliques(g11), length) #clique sizes
+
+largest_cliques(g11) # cliques with max number of nodes
+
+```
+
+From this plot, we can see that the biggest clique makes sense because it is composed of the Weasley family members as well as Ron Weasley's best friends (Harry and Hermione) and their worst enemy (Voldemort). This implies, that without any of these characters, there wouldn't be a story line. More importantly, the clique would probably break if Ron died because he's the most important link in the clique (between the friends and the family).
+
+```{r}
+
+#layout of the RMarkdown
+par(mar=c(1,1,3,1))
+
+#identifying the nodes within the network which belong to the clique
+vcol <- rep("grey80", vcount(g11))
+vcol[unlist(largest_cliques(g11))] <- "gold"
+
+plot(g11,
+     layout = mylayout,
+     vertex.label = V(g11)$name,
+     vertex.color=vcol, 
+     vertex.label.cex = 0.6,
+     vertex.label.dist=6,
+     vertex.size = 25,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-5,4.5),
+     xlim = c(-2,2))
+legend("top", legend = "", cex = 1.0, bty = "n", ncol = 1,
+       title = "Harry Potter - Largest Clique")
+```
+
+We can also analyze dyads (pairs of two nodes), triads (groups of three nodes) and bigger cliques in our network. For dyads, we can use the function dyad_census() from igraph or dyad.census() from sna. Both are identical and calculate a Holland and Leinhardt dyad census. 
+
+mut: 330 pairs with mutual connections.
+asym: 0 pairs with non-mutual connections (in the undirected network, there are none).
+null: 1750 pairs with no connection between them.
+
+Thus, from our network, there are an additional 1750 pairs of relationships possible within the nodes. This goes to support that only certain characters have high degree centralities that connect to other characters. 
+
+```{r}
+
+adjacency <- as.matrix(as_adjacency_matrix(g11))
+sna::dyad.census(adjacency)
+
+```
+
+"A (maximal) clique is a maximal set of mutually adjacency vertices."
+
+In this case, we wanted an overall view on the rest of the cliques. In order words, we wanted to see the frequence distribution of the cliques based on the number of edges. 
+
+```{r}
+node_clique <- clique.census(adjacency, mode = "graph", tabulate.by.vertex = TRUE, clique.comembership = "sum")
+edge_clique <- clique.census(adjacency, mode = "graph", tabulate.by.vertex = FALSE, clique.comembership = "sum")
+edge_clique$clique.count
+```
+
+# Community Detection
+
+### Clusters (Community detection based on edge betweenness (Newman-Girvan))
+
+The Girvan-Newman algorithm detects communities by progressively removing edges from the original network. The connected components of the remaining network are the communities. Instead of trying to construct a measure that tells us which edges are the most central to communities, the Girvan-Newman algorithm focuses on edges that are most likely "between" communities.
+
+From this network, the algorithm creates 13 communities. 
+
+```{r}
+
+#this is a list of all the cluster groups within the network
+ceb <- cluster_edge_betweenness(g11)
+ceb
+
+length(ceb) #number of communities
+
+membership(ceb) #community membership for each node - verify that each node was attributed a community
+
+```
+
+High modularity for a partitioning reflects dense connections within communities and sparse connections across communities. with this first algorithm, we calculated a low modularity of 0.04 because it creates the communites only based on the betweenness of the nodes. 
+
+```{r}
+
+modularity(ceb) # score of the graph partitioning 
+
+```
+
+When plotting the clusters, we obtain: 
+
+```{r}
+
+#layout of the RMarkdown
+par(mar=c(1,1,3,1))
+
+plot(ceb,
+     g11,
+     layout = mylayout,
+     vertex.label = NA)
+
+```
+
+
+### Community detection based on greedy optimization of modularity
+
+After calculating a very low modularity with the cmmunity detection based on edge betweenness, we decided to create another community model based on greedy optimization, which is also the optimization of the modularity itself. 
+
+The aim of modularity-optimizing community detection algorithms is to determine the partition(s) with maximum modularity. However, because we are looking for a maximum over all partitions of a network, the number of which is exponential in N, maximising modularity is equivalent to comparing the modularity of each and every partition of the network to determine the best one. 
+
+
+From this algorithm, we were able to increase our modularity score to 0.23
+
+When looking at our restult, it is a greedy community analysis algorithm that optimises the modularity score. This method starts with a totally non-clustered initial assignment, where each node forms a singleton community, and then computes the expected improvement of modularity for each pair of communities, chooses a community pair that gives the maximum improvement of modularity and merges them into a new community. The above procedure is repeated until no community pairs merge leads to an increase in modularity". 
+
+```{r}
+
+cfg <- cluster_fast_greedy(g11)
+
+modularity(cfg)
+
+```
+
+
+When plotting the clusters, we obtain: 
+
+```{r}
+
+par(mar=c(0,0,0,0))
+
+V(g11)$community <- cfg$membership
+
+colrs <- adjustcolor( c("gray50", "tomato", "gold", "yellowgreen"), alpha=.6)
+
+plot(g11,
+     layout = mylayout,
+     vertex.label = V(g11)$name,
+     vertex.color=colrs[V(g11)$community], 
+     vertex.label.color = "black",
+     vertex.label.cex = 0.6,
+     vertex.label.dist=3,
+     vertex.size = 20,
+     legend = TRUE,
+     asp = 0.75,
+     rescale = FALSE,
+     ylim = c(-4.5,5),
+     xlim = c(-3,2))
+legend("top", legend = "", cex = 2, bty = "n", ncol = 1,
+       title = "Harry Potter - Communities")
+```
+
+
+When wanting to have a more descriptive view of the dataset, we created a data frame to see which nodes belong to which community.  
+
+```{r}
+
+fg_HP<-fastgreedy.community(igraph::simplify(g1,edge.attr.comb = "min"))
+keys_community<-keys
+keys_community$grouping<-as.factor(membership(fg_HP))
+keys_community$Gender_Male<-NULL
+keys_community$Color<-NULL
+
+head(keys_community[order(-keys_community$grouping),])
+
+```
+
+Next, the following graph is just eye candy. It is a fun way to replicate the above graph in a more interactive way. The graph gives you the possibility to move the nodes around and with the filter on the left, select particular nodes (characters) and their closest relationships with other nodes. 
+
+(The graph is interactive, meaning you can alo zoom in/out but also can click on specific nodes and move them around. Plus, if the graph does not show in the Markdown, make sure it is in the same zip folder that the R document)
+
+```{r}
+#Sets node information based on actors as well as their associated community
+
+nodes <- data.frame(id = V(g11)$name, title = V(g11)$name, group = V(g11)$community)
+nodes <- nodes[order(nodes$id, decreasing = F),]
+edges <- get.data.frame(g11, what="edges")[1:2]
+
+graphh<-visNetwork(nodes, edges) %>%
+  visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>%
+  visLegend(position = "right", main = "Group") 
+
+visPhysics(graphh, stabilization = FALSE, adaptiveTimestep = FALSE, timestep = FALSE)
+```
+
+#Network Visualization
+
+As for the network visualization part, this will be explored both in Gephi and in Netlogo. 
+
+#Conclusion
+
+In conclusion, our analysis confirms Harry Potter as the most important character in the network. However, depending on your objective, it might be better to choose other characters that may have higher levels of degree or better diffusion capabilities. For example: Hermione seems to have the most influence on the whole network. 
+
+In all, if you need to pick a character to play in the future Harry Potter game, choose a character that belongs to the Gryffindor house and is aligned as a Good character. The chances of success may be greater, as most metrics identify these categories of characters as the most "connected".
